@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import numpy as np
 import pandas as pd
 
+from mesa.exceptions import AgentMissingException
+
 if TYPE_CHECKING:
     from mesa.agent import Agent
 
@@ -468,7 +470,7 @@ class AbstractAgentSet[A: Agent](ABC, MutableSet[A]):
         """Remove an agent from the AbstractAgentSet.
 
         Raises:
-            An Exception if the agent is not present.
+            AgentMissingException: If the agent is not present.
 
         Args:
             agent (Agent): The agent to remove from the set.
@@ -801,15 +803,19 @@ class AgentSet[A: Agent](AbstractAgentSet[A], Sequence[A]):
     def remove(self, agent: A):
         """Remove an agent from the AgentSet.
 
-        This method raises an error if the agent is not present.
-
         Args:
             agent (Agent): The agent to remove from the set.
+
+        Raises:
+            AgentMissingException: If the agent is not present.
 
         Note:
             This method is an implementation of the abstract method from MutableSet.
         """
-        del self._agents[agent]
+        try:
+            del self._agents[agent]
+        except KeyError as e:
+            raise AgentMissingException(agent) from e
 
     def __getstate__(self):
         """Retrieve the state of the AgentSet for serialization.
@@ -904,8 +910,11 @@ class _HardKeyAgentSet[A: Agent](AbstractAgentSet[A]):
             del self._agents[agent]
 
     def remove(self, agent: A):
-        """Remove an agent from the _HardKeyAgentSet. Raises KeyError if not present."""
-        del self._agents[agent]
+        """Remove an agent from the _HardKeyAgentSet. Raises AgentMissingException if not present."""
+        try:
+            del self._agents[agent]
+        except KeyError as e:
+            raise AgentMissingException(agent) from e
 
     # These methods ensure that views returned to the user do not hold strong refs.
 

@@ -22,19 +22,27 @@ class CellFullException(SpaceException):
         super().__init__(f"Cell at coordinate {coordinate} is full.")
 
 
-class AgentMissingException(MesaException):
-    """Raised when attempting to remove an agent that is not in the cell."""
+class AgentMissingException(MesaException, KeyError):  # noqa: N818
+    """Raised when attempting to remove an agent that is not in a cell or AgentSet.
 
-    def __init__(self, agent, coordinate):
+    Subclasses KeyError so that ``AgentSet.remove`` keeps the ``MutableSet`` contract.
+    """
+
+    def __init__(self, agent, coordinate=None):
         """Initialize the exception.
 
         Args:
             agent: The agent instance that was expected.
-            coordinate: The coordinate tuple of the cell.
+            coordinate: The coordinate tuple of the cell, or None if the agent
+                was expected in an AgentSet.
         """
         self.agent = agent
         self.coordinate = coordinate
-        super().__init__(f"Agent {agent.unique_id} is not in cell {coordinate}.")
+        location = "the AgentSet" if coordinate is None else f"cell {coordinate}"
+        super().__init__(f"Agent {agent.unique_id} is not in {location}.")
+
+    # KeyError.__str__ would wrap the message in quotes
+    __str__ = Exception.__str__
 
 
 class CellMissingException(SpaceException):

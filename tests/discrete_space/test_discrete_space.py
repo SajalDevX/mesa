@@ -662,8 +662,9 @@ def test_cell():
     cell1.remove_agent(agent)
     assert agent not in cell1.agents
 
-    with pytest.raises(AgentMissingException):
+    with pytest.raises(AgentMissingException) as excinfo:
         cell1.remove_agent(agent)
+    assert str(excinfo.value) == f"Agent {agent.unique_id} is not in cell (1,)."
 
     cell1 = Cell((1,), capacity=1, random=random.Random())
     cell1.add_agent(CellAgent(model))

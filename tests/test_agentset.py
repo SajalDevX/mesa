@@ -9,6 +9,7 @@ import pytest
 
 from mesa.agent import Agent
 from mesa.agentset import AgentSet, _HardKeyAgentSet
+from mesa.exceptions import AgentMissingException
 from mesa.model import Model
 
 
@@ -203,6 +204,12 @@ def test_agent_add_remove_discard():
     agentset.discard(agent)
     assert agent not in agentset
 
+    with pytest.raises(AgentMissingException) as excinfo:
+        agentset.remove(agent)
+    assert str(excinfo.value) == f"Agent {agent.unique_id} is not in the AgentSet."
+    assert excinfo.value.agent is agent
+
+    # still a KeyError, as MutableSet.remove requires
     with pytest.raises(KeyError):
         agentset.remove(agent)
 
@@ -972,7 +979,7 @@ def test_hardkeyagentset_add_remove():
     assert agent not in hard_set
     assert len(hard_set) == 0
 
-    with pytest.raises(KeyError):
+    with pytest.raises(AgentMissingException, match="is not in the AgentSet"):
         hard_set.remove(agent)
 
 
