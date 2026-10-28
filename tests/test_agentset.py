@@ -1,7 +1,9 @@
 """AgentSet.py related tests."""
 
 import copy
+import gc
 import pickle
+import weakref
 from random import Random
 
 import numpy as np
@@ -79,9 +81,13 @@ def test_agentset():
     assert len(agentset.select(at_most=1.0)) == 10  # Select 100% agents
     assert len(agentset.select(at_most=1)) == 1  # Select 1 agent
 
-    for bad_at_most in (float("nan"), 0.0, -0.5, 1.5):
+    for bad_at_most in (float("nan"), 0.0, -0.5, 1.5, -1, -5):
         with pytest.raises(ValueError):
             agentset.select(at_most=bad_at_most)
+
+    for bad_type in (False, True, "1", [1], None):
+        with pytest.raises(TypeError, match="must be an integer or float"):
+            agentset.select(at_most=bad_type)
 
     assert len(agentset.select(test_function)) == 5
     assert len(agentset.select(test_function, at_most=2)) == 2
@@ -850,6 +856,16 @@ def test_hardkeyagentset_downgrade():
     sorted_view = hard_set.sort("unique_id")
     assert isinstance(sorted_view, AgentSet)
 
+    random_view = hard_set.select_random(5)
+    assert isinstance(random_view, AgentSet)
+    assert not isinstance(random_view, _HardKeyAgentSet)
+    assert len(random_view) == 5
+
+    same_random = hard_set.select_random(5, inplace=True)
+    assert isinstance(same_random, _HardKeyAgentSet)
+    assert same_random is hard_set
+    assert len(same_random) == 5
+
     groups = hard_set.groupby(lambda a: a.unique_id % 2 == 0)
     for group in groups.groups.values():
         assert isinstance(group, AgentSet)
@@ -858,6 +874,23 @@ def test_hardkeyagentset_downgrade():
     groups_list = hard_set.groupby(lambda a: a.unique_id % 2 == 0, result_type="list")
     for group in groups_list.groups.values():
         assert isinstance(group, list)
+
+
+def test_hardkeyagentset_select_random_garbage_collection():
+    """Test that select_random on _HardKeyAgentSet allows removed agents to be garbage collected (#3992)."""
+    model = Model()
+    agent = AgentTest(model)
+    agent_ref = weakref.ref(agent)
+
+    sample = model.agents.select_random(1)
+    assert isinstance(sample, AgentSet)
+    assert not isinstance(sample, _HardKeyAgentSet)
+
+    agent.remove()
+    del agent
+    gc.collect()
+
+    assert agent_ref() is None
 
 
 def test_hardkeyagentset_inplace():
@@ -931,6 +964,113 @@ def test_hardkeyagentset_str():
             break
 
     assert success
+
+
+def test_agentset_do_shuffle_do_map_methods():
+    """Test map, do, and shuffle_do on weak-ref AgentSet with str and callable."""
+    model = Model()
+    agents = [AgentTest(model) for _ in range(5)]
+    aset = AgentSet(agents, random=model.random)
+
+    # map with str
+    res_str = aset.map("get_unique_identifier")
+    assert len(res_str) == 5
+
+    # map with callable
+    res_call = aset.map(lambda a: a.unique_id)
+    assert len(res_call) == 5
+
+    # do with str
+    aset.do("get_unique_identifier")
+
+    # do with callable
+    for a in agents:
+        a.touched = False
+    aset.do(lambda a: setattr(a, "touched", True))
+    assert all(a.touched for a in agents)
+
+    # shuffle_do with str
+    aset.shuffle_do("get_unique_identifier")
+
+    # shuffle_do with callable
+    aset.shuffle_do(lambda a: setattr(a, "touched", False))
+    assert all(not a.touched for a in agents)
+
+
+def test_agentset_do_skips_agent_removed_mid_iteration():
+    """Weak AgentSet.do/shuffle_do/map must not call an agent removed mid-iteration.
+
+    This tests that `agent in self._agents` guard works across `do`, `shuffle_do`,
+    and `map` with both string method names and callables.
+    """
+
+    class ShrinkingAgent(Agent):
+        def __init__(self, model, name):
+            super().__init__(model)
+            self.name = name
+            self.ran = False
+
+        def run(self):
+            if self.name == "Killer":
+                victim = next(a for a in self.model.aset if a.name == "Victim")
+                self.model.aset.discard(victim)
+                victim.remove()
+            self.ran = True
+            return self.name
+
+    # 1. Test do(str)
+    model = Model()
+    killer = ShrinkingAgent(model, "Killer")
+    victim = ShrinkingAgent(model, "Victim")
+    model.aset = AgentSet([killer, victim], random=model.random)
+    model.aset.do("run")
+    assert killer.ran and not victim.ran
+    assert victim not in model.aset
+
+    # 2. Test do(callable)
+    model = Model()
+    killer = ShrinkingAgent(model, "Killer")
+    victim = ShrinkingAgent(model, "Victim")
+    model.aset = AgentSet([killer, victim], random=model.random)
+    model.aset.do(lambda a: a.run())
+    assert killer.ran and not victim.ran
+    assert victim not in model.aset
+
+    # 3. Test map(str)
+    model = Model()
+    killer = ShrinkingAgent(model, "Killer")
+    victim = ShrinkingAgent(model, "Victim")
+    model.aset = AgentSet([killer, victim], random=model.random)
+    results = model.aset.map("run")
+    assert killer.ran and not victim.ran
+    assert results == ["Killer"]
+    assert victim not in model.aset
+
+    # 4. Test map(callable)
+    model = Model()
+    killer = ShrinkingAgent(model, "Killer")
+    victim = ShrinkingAgent(model, "Victim")
+    model.aset = AgentSet([killer, victim], random=model.random)
+    results = model.aset.map(lambda a: a.run())
+    assert killer.ran and not victim.ran
+    assert results == ["Killer"]
+    assert victim not in model.aset
+
+    # 5. Test shuffle_do(str) and shuffle_do(callable)
+    for method in ["run", lambda a: a.run()]:
+        success = False
+        for seed in range(20):
+            model = Model(rng=seed)
+            killer = ShrinkingAgent(model, "Killer")
+            victim = ShrinkingAgent(model, "Victim")
+            model.aset = AgentSet([killer, victim], random=model.random)
+            model.aset.shuffle_do(method)
+
+            if killer.ran and not victim.ran:
+                assert victim not in model.aset
+                success = True
+                break
+        assert success, f"Never exercised killer-first ordering for {method}"
 
 
 def test_hardkeyagentset_map_do_shuffledo():
@@ -1208,6 +1348,27 @@ def test_select_random_edge_cases_and_errors():
     # Unsupported weights type
     with pytest.raises(TypeError, match="Unsupported weights type"):
         agentset.select_random(2, weights=12345)
+
+
+@pytest.mark.parametrize(
+    "n", [np.int64(2), np.int32(2), np.uint8(2), np.float64(0.5), np.float32(0.5)]
+)
+def test_select_random_accepts_numpy_numbers(n):
+    """Test that numpy integer and float scalars are accepted for n."""
+    model = Model(rng=42)
+    agents = [AgentTest(model) for _ in range(4)]
+    agentset = AgentSet(agents, random=model.random)
+
+    assert len(agentset.select_random(n)) == 2
+
+
+def test_select_random_rejects_numpy_bool():
+    """Test that numpy booleans are rejected like Python booleans."""
+    model = Model(rng=42)
+    agentset = AgentSet([AgentTest(model) for _ in range(3)], random=model.random)
+
+    with pytest.raises(TypeError, match="n must be an integer or float"):
+        agentset.select_random(np.True_)
 
 
 def test_select_random_realistic_abm_evolution_scenario():
