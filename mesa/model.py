@@ -381,7 +381,8 @@ class Model[A: Agent, S: Scenario](HasEmitters):
             The EventGenerator (can be used to stop)
 
         Raises:
-            ValueError: If the schedule start time is in the past.
+            ValueError: If the schedule start time is in the past, or if the
+                first run would be after the schedule end time.
         """
         generator = EventGenerator(self, function, schedule, priority)
         generator.start()

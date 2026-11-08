@@ -348,6 +348,8 @@ class EventGenerator:
         Raises:
             ValueError: If schedule.start is in the past, e.g. when restarting
                 a stopped generator after its start time has passed.
+            ValueError: If the first run would be after schedule.end, e.g. when
+                no start is given and model.time + interval > schedule.end.
         """
         if self._active:
             return self
@@ -366,7 +368,11 @@ class EventGenerator:
 
         # Without an explicit start, the first run can already fall after end
         if self.schedule.end is not None and start_time > self.schedule.end:
-            return self
+            raise ValueError(
+                f"Cannot start recurring schedule: its first run at {start_time} "
+                f"would be after its end time {self.schedule.end}, so it would "
+                f"never run. Set schedule.start explicitly or use a later end."
+            )
 
         self._active = True
         self.model._event_generators.add(self)

@@ -1000,16 +1000,23 @@ class TestEventGeneratorExecution:
         assert not gen.is_active
 
     def test_schedule_end_before_first_execution(self, setup):
-        """Test no execution when the first run would already be past schedule.end."""
+        """Test start() raises when the first run would already be past schedule.end."""
         model, fn = setup
         model.run_for(10.0)
         gen = EventGenerator(model, fn, Schedule(interval=5.0, end=12.0))
-        gen.start()
+        with pytest.raises(
+            ValueError, match=r"first run at 15\.0 would be after its end time 12\.0"
+        ):
+            gen.start()
 
         model.run_for(10.0)
         assert fn.call_count == 0
         assert not gen.is_active
         assert gen.next_scheduled_time is None
+        assert gen not in model._event_generators
+
+        with pytest.raises(ValueError, match="would be after its end time"):
+            model.schedule_recurring(fn, Schedule(interval=5.0, end=12.0))
 
     def test_schedule_count(self, setup):
         """Test schedule.count limits executions."""
